@@ -140,12 +140,14 @@ if sourceUsesSentryModule {
     products.append(.library(name: "SentrySPM", targets: ["SentryObjCInternal"]))
 }
 
+products += [
+    .library(name: "SentryNativeUtils", type: .static, targets: ["SentryNativeUtils"]),
+    .library(name: "SentryProfiling", type: .static, targets: ["SentryProfiling"])
+]
+
 let sentrySwiftTarget: Target = .target(
     name: sentrySwiftTargetName,
-    dependencies: [
-        "_SentryPrivate",
-        "SentryHeaders"
-    ] + kscrashSwiftDependencies,
+    dependencies: ["_SentryPrivate", "SentryHeaders", "SentryNativeUtils", "SentryProfiling"] + kscrashSwiftDependencies,
     path: "Sources/Swift",
     cSettings: cSettings,
     swiftSettings: [
@@ -177,7 +179,9 @@ let sentryObjCInternalExcludes = [
     "SentryDistribution",
     "SentryDistributionTests",
     "SentryObjC",
-    "SentryObjCCompat"
+    "SentryObjCCompat",
+    "SentryNativeUtils",
+    "SentryProfiling"
 ]
 
 let sentryObjCInternalCSettings: [CSetting] = [
@@ -194,6 +198,16 @@ if !envSelectsV10 {
 }
 
 targets += [
+    // Shared Objective-C++ utilities only. No Swift sources or Swift target dependencies.
+    .target(
+        name: "SentryNativeUtils",
+        publicHeadersPath: "include"
+    ),
+    .target(
+        name: "SentryProfiling",
+        dependencies: ["SentryNativeUtils"],
+        publicHeadersPath: "include"
+    ),
     // At least one source file is required, therefore we use a dummy class to satisfy the SPM build system
     .target(
         name: "SentryHeaders",
@@ -215,7 +229,7 @@ targets += [
     ),
     .target(
         name: "_SentryPrivate",
-        dependencies: sentryPrivateDependencies,
+        dependencies: sentryPrivateDependencies + ["SentryNativeUtils", "SentryProfiling"],
         path: "Sources/Sentry",
         sources: ["SentryDummyPrivateEmptyClass.m"],
         publicHeadersPath: "include",
@@ -225,7 +239,7 @@ targets += [
     sentrySwiftTarget
 ]
 
-var sentryObjCInternalDependencies: [Target.Dependency] = [.target(name: sentrySwiftTargetName)] + kscrashDependencies
+var sentryObjCInternalDependencies: [Target.Dependency] = [.target(name: sentrySwiftTargetName), "SentryNativeUtils", "SentryProfiling"] + kscrashDependencies
 if !envSelectsV10 {
     sentryObjCInternalDependencies += [
         .target(name: "SentryCrashV9"),
@@ -310,6 +324,23 @@ targets += [
 // Swift 6.1 needs smaller expressions to type-check the test targets.
 targets += [
     .target(
+        name: "SentryNativeUtilsTestSupport",
+        path: "Tests/SentryNativeUtilsTests/Support",
+        publicHeadersPath: "include"
+    ),
+    .testTarget(
+        name: "SentryNativeUtilsTests",
+        dependencies: ["SentryNativeUtils", "SentryNativeUtilsTestSupport"],
+        exclude: ["Support"]
+    ),
+    .testTarget(
+        name: "SentryProfilingTests",
+        dependencies: ["SentryProfiling"]
+    )
+]
+
+targets += [
+    .target(
         name: "SentryTestUtilsObjC",
         dependencies: ["SentryObjCInternal", .target(name: sentrySwiftTargetName), "_SentryPrivate", "SentryHeaders", "SentryTestUtilsObjCpp"],
         path: "SentryTestUtils/SourcesObjC",
@@ -392,7 +423,7 @@ targets += [
     .testTarget(
         name: "SentryTests",
         dependencies: [
-            .target(name: sentrySwiftTargetName), "_SentryPrivate", "SentryTestUtils", "SentryTestUtilsObjC", "SentryTestUtilsObjCpp",
+            .target(name: sentrySwiftTargetName), "_SentryPrivate", "SentryNativeUtils", "SentryTestUtils", "SentryTestUtilsObjC", "SentryTestUtilsObjCpp",
             .product(name: "SentryTestUtilsDynamic", package: "SentryTestUtilsDynamic", condition: .when(platforms: [.iOS, .macCatalyst, .tvOS, .visionOS]))
         ] + (envSelectsV10 ? [.product(name: "RecordingCore", package: "KSCrash")] : [.target(name: "SentryCrashV9Swift")]),
         path: "Tests/SentryTests",
@@ -460,7 +491,7 @@ if !envSelectsV10 {
     targets += [
         .testTarget(
             name: "SentryProfilerTests",
-            dependencies: [.target(name: sentrySwiftTargetName), "SentryTestUtils", "SentryTestUtilsObjC", "SentryTestUtilsObjCpp"],
+            dependencies: [.target(name: sentrySwiftTargetName), "SentryProfiling", "SentryTestUtils", "SentryTestUtilsObjC", "SentryTestUtilsObjCpp"],
             path: "Tests/SentryProfilerTests",
             exclude: ["ObjC"],
             // Keep Swift's Clang importer consistent with the NoUI SDK declarations.
